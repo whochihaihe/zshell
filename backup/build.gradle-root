@@ -1,0 +1,29 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        google()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:4.1.2'
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+// 全局清理任务，确保删除临时文件
+task clean(type: Delete) {
+    delete rootProject.buildDir
+    // 额外清理可能生成的临时文件
+    delete fileTree(rootProject.projectDir) {
+        include '**/*:Zone.Identifier'
+        include '**/Thumbs.db'
+        include '**/.DS_Store'
+    }
+}
+    
