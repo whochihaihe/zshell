@@ -80,33 +80,10 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
     private int MIN_FONTSIZE;
     private static int currentFontSize = -1;
 
-    /**
-     * Global state of application settings.
-     */
     TerminalPreferences mSettings;
-
-    /**
-     * The main view of the activity showing the terminal. Initialized in onCreate().
-     */
     TerminalView mTerminalView;
-
-    /**
-     * The view of Extra Keys Row. Initialized in onCreate() and used by InputDispatcher.
-     */
     ExtraKeysView mExtraKeysView;
-
-    /**
-     * The connection to the {@link TerminalService}. Requested in {@link #onCreate(Bundle)}
-     * with a call to {@link #bindService(Intent, ServiceConnection, int)}, obtained and stored
-     * in {@link #onServiceConnected(ComponentName, IBinder)}.
-     */
     TerminalService mTermService;
-
-    /**
-     * If between onResume() and onStop(). Note that only one session is in the foreground of
-     * the terminal view at the time, so if the session causing a change is not in the foreground
-     * it should probably be treated as background.
-     */
     private boolean mIsVisible;
 
     @Override
@@ -142,28 +119,19 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         }
     }
 
-    /**
-     * Check for storage permission and start service.
-     */
     private void startApplication() {
         boolean hasStoragePermission = false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // On Android 11 we need to deal with MANAGE_EXTERNAL_STORAGE permission to overcome
-            // the scoped storage restrictions.
-            // Ref: https://developer.android.com/about/versions/11/privacy/storage#all-files-access
-            // Ref: https://developer.android.com/training/data-storage/manage-all-files
             if (Environment.isExternalStorageManager()) {
                 hasStoragePermission = true;
             }
         } else {
-            // Otherwise use a regular permission WRITE_EXTERNAL_STORAGE.
             if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 == PackageManager.PERMISSION_GRANTED) {
                 hasStoragePermission = true;
             }
         }
 
-        // Ensure that application can manage storage.
         if (!hasStoragePermission) {
             startActivity(new Intent(this, StoragePermissionActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -171,7 +139,6 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
             return;
         }
 
-        // Start the service and make it run regardless of who is bound to it:
         Intent serviceIntent = new Intent(this, TerminalService.class);
         startService(serviceIntent);
         if (!bindService(serviceIntent, this, 0)) {
@@ -179,30 +146,23 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         }
     }
 
-    /**
-     * Reset terminal font size to the optimal value and set custom text font.
-     */
     private void setupTerminalStyle() {
         float dipInPixels = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 1,
             getResources().getDisplayMetrics());
         int defaultFontSize = Math.round(7.5f * dipInPixels);
 
-        // Make it divisible by 2 since that is the minimal adjustment step:
         if (defaultFontSize % 2 == 1) defaultFontSize--;
 
         if (TerminalActivity.currentFontSize == -1) {
             TerminalActivity.currentFontSize = defaultFontSize;
         }
 
-        // This is a bit arbitrary and sub-optimal. We want to give a sensible default for minimum
-        // font size to prevent invisible text due to zoom be mistake:
         MIN_FONTSIZE = (int) (4f * dipInPixels);
 
         TerminalActivity.currentFontSize = Math.max(MIN_FONTSIZE,
             Math.min(TerminalActivity.currentFontSize, MAX_FONTSIZE));
         mTerminalView.setTextSize(TerminalActivity.currentFontSize);
 
-        // Use bundled in app monospace font.
         mTerminalView.setTypeface(Typeface.createFromAsset(getAssets(), "console_font.ttf"));
     }
 
@@ -218,8 +178,6 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
             }
         }
 
-        // The current terminal session may have changed while being away, force
-        // a refresh of the displayed terminal:
         mTerminalView.onScreenUpdated();
     }
 
@@ -233,18 +191,12 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
     public void onDestroy() {
         super.onDestroy();
         if (mTermService != null) {
-            // Do not leave service with references to activity.
             mTermService.mSessionChangeCallback = null;
             mTermService = null;
             unbindService(this);
         }
     }
 
-    /**
-     * Part of the {@link ServiceConnection} interface. The service is bound with
-     * {@link #bindService(Intent, ServiceConnection, int)} in {@link #onCreate(Bundle)} which
-     * will cause a call to this callback method.
-     */
     @Override
     public void onServiceConnected(ComponentName componentName, IBinder service) {
         mTermService = ((TerminalService.LocalBinder) service).service;
@@ -260,14 +212,10 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
 
             @Override
             public void onSessionFinished(final TerminalSession finishedSession) {
-                // Needed for resetting font size on next application launch
-                // otherwise it will be reset only after force-closing.
                 TerminalActivity.currentFontSize = -1;
 
-                // Do not immediately terminate service in debug builds.
                 if (!BuildConfig.DEBUG) {
                     if (mTermService.mWantsToStop) {
-                        // The service wants to stop as soon as possible.
                         if (!TerminalActivity.this.isFinishing()) {
                             finish();
                         }
@@ -301,7 +249,7 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         if (mTermService.getSession() == null) {
             if (mIsVisible) {
                 Installer.setupIfNeeded(TerminalActivity.this, () -> {
-                    if (mTermService == null) return; // Activity might have been destroyed.
+                    if (mTermService == null) return;
 
                     try {
                         TerminalSession session = startQemu();
@@ -312,7 +260,6 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
                     }
                 });
             } else {
-                // The service connected while not in foreground - just bail out.
                 if (!TerminalActivity.this.isFinishing()) {
                     finish();
                 }
@@ -324,38 +271,11 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
 
     @Override
     public void onServiceDisconnected(ComponentName name) {
-        // Respect being stopped from the TerminalService notification action.
         if (!TerminalActivity.this.isFinishing()) {
             finish();
         }
     }
 
-    /**
-     * Get a random free high tcp port which later will be used in startQemu().
-     * @return Integer value in range 30000 - 50000 which is available tcp port.
-     *         On failure -1 will be returned.
-     */
-    private int getFreePort() {
-        Random rnd = new Random();
-        int port = -1;
-
-        for (int i=0; i<32; i++) {
-            try (ServerSocket sock = new ServerSocket(rnd.nextInt(20001) + 30000)) {
-                sock.setReuseAddress(true);
-                port = sock.getLocalPort();
-                break;
-            } catch (Exception e) {
-                Log.w(Config.APP_LOG_TAG, "cannot acquire tcp port", e);
-            }
-        }
-
-        return port;
-    }
-
-    /**
-     * Determine a safe amount of memory which could be allocated by QEMU.
-     * @returns Array containing 2 integers, [tcg, vm_ram];
-     */
     private int[] getSafeMem() {
         Context appContext = this;
         ActivityManager am = (ActivityManager) appContext.getSystemService(Context.ACTIVITY_SERVICE);
@@ -367,17 +287,12 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
 
         am.getMemoryInfo(memInfo);
 
-        // Log memory information for troubleshooting purposes.
         Log.i(Config.APP_LOG_TAG, "memory: " + memInfo.totalMem + " total, "
             + memInfo.availMem + " avail, " + memInfo.threshold + " oom threshold");
         Log.i(Config.APP_LOG_TAG, "system low on memory: " + memInfo.lowMemory);
 
-        // Unconditionally reserve 20% + oom threshold for system to ensure that
-        // application won't be killed by Android unless really necessary.
         int safeMem = (int) ((memInfo.availMem * 0.8 - memInfo.threshold) / 1048576);
 
-        // Ensure that neither tcg or ram buffer size is below minimum.
-        // TCG will consume 12% of available safe-for-use memory.
         int tcgAlloc = Math.min(Config.QEMU_MAX_TCG_BUF,
             Math.max(Config.QEMU_MIN_TCG_BUF, (int) (safeMem * 0.12)));
         int ramAlloc = Math.min(Config.QEMU_MAX_SAFE_RAM,
@@ -388,10 +303,6 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         return new int[]{tcgAlloc, ramAlloc};
     }
 
-    /**
-     * Create a terminal session running QEMU.
-     * @return TerminalSession instance.
-     */
     private TerminalSession startQemu() {
         ArrayList<String> environment = new ArrayList<>();
         Context appContext = this;
@@ -406,16 +317,11 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         environment.add("PATH=/system/bin");
         environment.add("TMPDIR=" + appContext.getCacheDir().getAbsolutePath());
 
-        // Used by QEMU internal DNS.
         environment.add("CONFIG_QEMU_DNS=" + Config.QEMU_UPSTREAM_DNS_V4);
         environment.add("CONFIG_QEMU_DNS6=" + Config.QEMU_UPSTREAM_DNS_V6);
 
-        // Variables present on Android 10 or higher.
         String[] androidExtra = {
-            "ANDROID_ART_ROOT",
-            "ANDROID_I18N_ROOT",
-            "ANDROID_RUNTIME_ROOT",
-            "ANDROID_TZDATA_ROOT"
+            "ANDROID_ART_ROOT", "ANDROID_I18N_ROOT", "ANDROID_RUNTIME_ROOT", "ANDROID_TZDATA_ROOT"
         };
         for (String var : androidExtra) {
             String value = System.getenv(var);
@@ -424,29 +330,15 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
             }
         }
 
-        // QEMU is loaded as shared library, however options are being provided as
-        // command line arguments.
         ArrayList<String> processArgs = new ArrayList<>();
-
-        // Fake argument to provide argv[0].
         processArgs.add("vShell");
-
-        // Path to directory with firmware & keymap files.
         processArgs.addAll(Arrays.asList("-L", runtimeDataPath));
-
-        // Emulate CPU with max feature set.
         processArgs.addAll(Arrays.asList("-cpu", "max"));
 
-        // Use information about available free memory reported by Android OS to
-        // choose appropriate values.
-        // mem[0] - tcg buffer size, mem[1] - vm ram buffer size.
         int[] mem = getSafeMem();
         processArgs.addAll(Arrays.asList("-accel", "tcg,tb-size=" + mem[0], "-m", String.valueOf(mem[1])));
-
-        // Do not create default devices.
         processArgs.add("-nodefaults");
 
-        // SCSI CD-ROM(s) and HDD(s).
         processArgs.addAll(Arrays.asList("-drive", "file=" + runtimeDataPath + "/"
             + Config.CDROM_IMAGE_NAME + ",if=none,media=cdrom,index=0,id=cd0"));
         processArgs.addAll(Arrays.asList("-drive", "file=" + runtimeDataPath + "/"
@@ -458,46 +350,45 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         processArgs.addAll(Arrays.asList("-device",
             "scsi-hd,bus=virtio-scsi-pci0.0,id=scsi-hd0,drive=hd0"));
 
-        // Try to boot from HDD.
-        // Default HDD setup has a valid MBR allowing to try next drive in case if OS not
-        // installed, so CD-ROM is going to be actually booted.
         processArgs.addAll(Arrays.asList("-boot", "c,menu=on"));
 
-        // Setup random number generator.
         processArgs.addAll(Arrays.asList("-object", "rng-random,filename=/dev/urandom,id=rng0"));
         processArgs.addAll(Arrays.asList("-device", "virtio-rng-pci,rng=rng0,id=virtio-rng-pci0"));
 
-        // Networking.
+        // 网络配置 - 使用固定端口转发
         String vmnicArgs = "user,id=vmnic0";
+        
+        // 从偏好设置获取端口配置
+        int sshPort = mSettings.getSshPort();          // 8022
+        int port5678 = mSettings.getPort5678();        // 5678
+        int port5700 = mSettings.getPort5700();        // 5700
+        int port6379 = mSettings.getPort6379();        // 6379
+        int port9000 = mSettings.getPort9000();        // 9000
 
-        // Get a free high port for SSH forwarding.
-        // This port will be exposed to external network. User should take care about security.
-        int sshPort = getFreePort();
-        if (sshPort != -1) {
-            mTermService.SSH_PORT = sshPort;
-            vmnicArgs = vmnicArgs + ",hostfwd=tcp::" + sshPort + "-:22";
-        }
+        // 配置所有端口转发规则
+        String[] portForwards = {
+            "hostfwd=tcp::" + sshPort + "-:22",        // SSH: 8022->22
+            "hostfwd=tcp::" + port5678 + "-:5678",     // 5678->5678
+            "hostfwd=tcp::" + port5700 + "-:5700",     // 5700->5700
+            "hostfwd=tcp::" + port6379 + "-:6379",     // 6379->6379
+            "hostfwd=tcp::" + port9000 + "-:9000"      // 9000->9000
+        };
+        
+        // 将端口转发规则添加到网络配置
+        vmnicArgs += "," + TextUtils.join(",", portForwards);
 
-        // Get a free high port for Web forwarding.
-        // This port will be exposed to external network. User should take care about security.
-        int webPort = -1;
-        // Case where webPort will be equal to sshPort is unlikely, but
-        // try eliminate this possibility as well.
-        for (int attempt=0; attempt<3; attempt++) {
-            webPort = getFreePort();
-            if (webPort != sshPort && webPort != -1) {
-                mTermService.WEB_PORT = webPort;
-                vmnicArgs = vmnicArgs + ",hostfwd=tcp::" + webPort + "-:80";
-                break;
-            } else {
-                webPort = -1;
-            }
-        }
+        // 更新服务中的端口信息
+        mTermService.SSH_PORT = sshPort;
+        mTermService.WEB_PORT = -1;
+        mTermService.PORT_5678 = port5678;
+        mTermService.PORT_5700 = port5700;
+        mTermService.PORT_6379 = port6379;
+        mTermService.PORT_9000 = port9000;
 
         processArgs.addAll(Arrays.asList("-netdev", vmnicArgs));
         processArgs.addAll(Arrays.asList("-device", "virtio-net-pci,netdev=vmnic0,id=virtio-net-pci0"));
 
-        // Access to shared storage.
+        // 共享存储访问
         if (Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState())) {
             processArgs.addAll(Arrays.asList("-fsdev",
                 "local,security_model=mapped-file,id=fsdev0,multidevs=remap,path=/storage/self/primary"));
@@ -505,31 +396,21 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
                 "virtio-9p-pci,fsdev=fsdev0,mount_tag=host_storage,id=virtio-9p-pci0"));
         }
 
-        // We need only monitor & serial consoles.
         processArgs.add("-nographic");
-
-        // Disable parallel port.
         processArgs.addAll(Arrays.asList("-parallel", "none"));
-
-        // Serial console.
         processArgs.addAll(Arrays.asList("-chardev", "stdio,id=serial0,mux=off,signal=off"));
         processArgs.addAll(Arrays.asList("-serial", "chardev:serial0"));
 
-        Log.i(Config.APP_LOG_TAG, "initiating QEMU session with following arguments: "
-            + processArgs.toString());
+        Log.i(Config.APP_LOG_TAG, "QEMU启动参数: " + processArgs.toString());
 
         TerminalSession session = new TerminalSession(processArgs.toArray(new String[0]),
             environment.toArray(new String[0]), Config.getDataDirectory(appContext), mTermService);
 
-        // Notify user that booting can take a while.
         Toast.makeText(this, R.string.toast_boot_notification, Toast.LENGTH_LONG).show();
 
         return session;
     }
 
-    /**
-     * Hook system menu to show context menu instead.
-     */
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         mTerminalView.showContextMenu();
@@ -541,11 +422,8 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         menu.add(Menu.NONE, CONTEXTMENU_SHOW_HELP, Menu.NONE, R.string.menu_show_help);
         if (mTermService != null) {
             if (mTermService.SSH_PORT != -1) {
-                menu.add(Menu.NONE, CONTEXTMENU_OPEN_SSH, Menu.NONE, getResources().getString(R.string.menu_open_ssh, "localhost:" + mTermService.SSH_PORT));
-            }
-
-            if (mTermService.WEB_PORT != -1) {
-                menu.add(Menu.NONE, CONTEXTMENU_OPEN_WEB, Menu.NONE, getResources().getString(R.string.menu_open_web, "localhost:" + mTermService.WEB_PORT));
+                menu.add(Menu.NONE, CONTEXTMENU_OPEN_SSH, Menu.NONE, 
+                    getResources().getString(R.string.menu_open_ssh, "localhost:" + mTermService.SSH_PORT));
             }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -593,7 +471,6 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
                             mSettings.setDefaultSshUser(this, userName);
                         }
 
-                        // Such URLs handled by applications like ConnectBot.
                         String address = "ssh://" + userName + "@127.0.0.1:" + mTermService.SSH_PORT + "/#vShell";
                         Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(address));
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -601,7 +478,7 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
                             startActivity(intent);
                         } catch (Exception e) {
                             Toast.makeText(this, R.string.toast_open_ssh_intent_failure, Toast.LENGTH_LONG).show();
-                            Log.e(Config.APP_LOG_TAG, "failed to start intent", e);
+                            Log.e(Config.APP_LOG_TAG, "启动SSH客户端失败", e);
                         }
                         dialog.dismiss();
                     }).setNegativeButton(R.string.cancel_label, ((dialog, which) -> dialog.dismiss())).show();
@@ -610,24 +487,7 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
                 }
                 return true;
             case CONTEXTMENU_OPEN_WEB:
-                int webPort = -1;
-
-                if (mTermService != null) {
-                    webPort = mTermService.WEB_PORT;
-                }
-
-                if (webPort != -1) {
-                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:" + webPort));
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    try {
-                        startActivity(intent);
-                    } catch (Exception e) {
-                        Toast.makeText(this, R.string.toast_open_web_intent_failure, Toast.LENGTH_LONG).show();
-                        Log.e(Config.APP_LOG_TAG, "failed to start intent", e);
-                    }
-                } else {
-                    Toast.makeText(this, R.string.toast_open_web_unavailable, Toast.LENGTH_LONG).show();
-                }
+                Toast.makeText(this, R.string.toast_open_web_unavailable, Toast.LENGTH_LONG).show();
                 return true;
             case CONTEXTMENU_AUTOFILL_PW:
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -668,9 +528,6 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         }
     }
 
-    /**
-     * Paste text from clipboard.
-     */
     public void doPaste() {
         ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
 
@@ -692,9 +549,6 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         }
     }
 
-    /**
-     * Extract URLs from the current transcript and show them in dialog.
-     */
     public void showUrlSelection() {
         TerminalSession currentSession = mTerminalView.getCurrentSession();
 
@@ -711,9 +565,8 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         }
 
         final CharSequence[] urls = urlSet.toArray(new CharSequence[0]);
-        Collections.reverse(Arrays.asList(urls)); // Latest first.
+        Collections.reverse(Arrays.asList(urls));
 
-        // Click to copy url to clipboard:
         final AlertDialog dialog = new AlertDialog.Builder(TerminalActivity.this)
             .setItems(urls, (di, which) -> {
                 String url = (String) urls[which];
@@ -727,21 +580,17 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
                 }
         }).setTitle(R.string.select_url_dialog_title).create();
 
-        // Long press to open URL:
         dialog.setOnShowListener(di -> {
-            ListView lv = dialog.getListView(); // this is a ListView with your "buds" in it
+            ListView lv = dialog.getListView();
             lv.setOnItemLongClickListener((parent, view, position, id) -> {
                 dialog.dismiss();
                 String url = (String) urls[position];
 
-                // Disable handling of 'file://' urls since this may
-                // produce android.os.FileUriExposedException.
                 if (!url.startsWith("file://")) {
                     Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
                     try {
                         startActivity(i, null);
                     } catch (ActivityNotFoundException e) {
-                        // If no applications match, Android displays a system message.
                         startActivity(Intent.createChooser(i, null));
                     }
                 } else {
@@ -755,77 +604,29 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         dialog.show();
     }
 
-    /**
-     * Extract URLs from the given text.
-     */
     @SuppressWarnings("StringBufferReplaceableByString")
     private static LinkedHashSet<CharSequence> extractUrls(String text) {
         StringBuilder regex_sb = new StringBuilder();
 
-        regex_sb.append("(");                       // Begin first matching group.
-        regex_sb.append("(?:");                     // Begin scheme group.
-        regex_sb.append("dav|");                    // The DAV proto.
-        regex_sb.append("dict|");                   // The DICT proto.
-        regex_sb.append("dns|");                    // The DNS proto.
-        regex_sb.append("file|");                   // File path.
-        regex_sb.append("finger|");                 // The Finger proto.
-        regex_sb.append("ftp(?:s?)|");              // The FTP proto.
-        regex_sb.append("git|");                    // The Git proto.
-        regex_sb.append("gemini|");                 // The Gemini proto.
-        regex_sb.append("gopher|");                 // The Gopher proto.
-        regex_sb.append("http(?:s?)|");             // The HTTP proto.
-        regex_sb.append("imap(?:s?)|");             // The IMAP proto.
-        regex_sb.append("irc(?:[6s]?)|");           // The IRC proto.
-        regex_sb.append("ip[fn]s|");                // The IPFS proto.
-        regex_sb.append("ldap(?:s?)|");             // The LDAP proto.
-        regex_sb.append("pop3(?:s?)|");             // The POP3 proto.
-        regex_sb.append("redis(?:s?)|");            // The Redis proto.
-        regex_sb.append("rsync|");                  // The Rsync proto.
-        regex_sb.append("rtsp(?:[su]?)|");          // The RTSP proto.
-        regex_sb.append("sftp|");                   // The SFTP proto.
-        regex_sb.append("smb(?:s?)|");              // The SAMBA proto.
-        regex_sb.append("smtp(?:s?)|");             // The SMTP proto.
-        regex_sb.append("svn(?:(?:\\+ssh)?)|");     // The Subversion proto.
-        regex_sb.append("tcp|");                    // The TCP proto.
-        regex_sb.append("telnet|");                 // The Telnet proto.
-        regex_sb.append("tftp|");                   // The TFTP proto.
-        regex_sb.append("udp|");                    // The UDP proto.
-        regex_sb.append("vnc|");                    // The VNC proto.
-        regex_sb.append("ws(?:s?)");                // The Websocket proto.
-        regex_sb.append(")://");                    // End scheme group.
-        regex_sb.append(")");                       // End first matching group.
-
-        // Begin second matching group.
         regex_sb.append("(");
-
-        // User name and/or password in format 'user:pass@'.
-        regex_sb.append("(?:\\S+(?::\\S*)?@)?");
-
-        // Begin host group.
         regex_sb.append("(?:");
-
-        // IP address (from http://www.regular-expressions.info/examples.html).
-        regex_sb.append("(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|");
-
-        // Host name or domain.
-        regex_sb.append("(?:(?:[a-z\\u00a1-\\uffff0-9]-*)*[a-z\\u00a1-\\uffff0-9]+)(?:(?:\\.(?:[a-z\\u00a1-\\uffff0-9]-*)*[a-z\\u00a1-\\uffff0-9]+)*(?:\\.(?:[a-z\\u00a1-\\uffff]{2,})))?|");
-
-        // Just path. Used in case of 'file://' scheme.
-        regex_sb.append("/(?:(?:[a-z\\u00a1-\\uffff0-9]-*)*[a-z\\u00a1-\\uffff0-9]+)");
-
-        // End host group.
+        regex_sb.append("dav|dict|dns|file|finger|ftp(?:s?)|git|gemini|gopher|http(?:s?)|");
+        regex_sb.append("imap(?:s?)|irc(?:[6s]?)|ip[fn]s|ldap(?:s?)|pop3(?:s?)|redis(?:s?)|");
+        regex_sb.append("rsync|rtsp(?:[su]?)|sftp|smb(?:s?)|smtp(?:s?)|svn(?:(?:\\+ssh)?)|");
+        regex_sb.append("tcp|telnet|tftp|udp|vnc|ws(?:s?)");
+        regex_sb.append(")://");
         regex_sb.append(")");
 
-        // Port number.
+        regex_sb.append("(");
+        regex_sb.append("(?:\\S+(?::\\S*)?@)?");
+        regex_sb.append("(?:");
+        regex_sb.append("(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|");
+        regex_sb.append("(?:(?:[a-z\\u00a1-\\uffff0-9]-*)*[a-z\\u00a1-\\uffff0-9]+)(?:(?:\\.(?:[a-z\\u00a1-\\uffff0-9]-*)*[a-z\\u00a1-\\uffff0-9]+)*(?:\\.(?:[a-z\\u00a1-\\uffff]{2,})))?|");
+        regex_sb.append("/(?:(?:[a-z\\u00a1-\\uffff0-9]-*)*[a-z\\u00a1-\\uffff0-9]+)");
+        regex_sb.append(")");
         regex_sb.append("(?::\\d{1,5})?");
-
-        // Resource path with optional query string.
         regex_sb.append("(?:/[a-zA-Z0-9:@%\\-._~!$&()*+,;=?/]*)?");
-
-        // Fragment.
         regex_sb.append("(?:#[a-zA-Z0-9:@%\\-._~!$&()*+,;=?/]*)?");
-
-        // End second matching group.
         regex_sb.append(")");
 
         final Pattern urlPattern = Pattern.compile(
@@ -845,9 +646,6 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         return urlSet;
     }
 
-    /**
-     * Change terminal font size.
-     */
     public void changeFontSize(boolean increase) {
         TerminalActivity.currentFontSize += (increase ? 1 : -1) * 2;
         TerminalActivity.currentFontSize = Math.max(MIN_FONTSIZE,
@@ -855,12 +653,10 @@ public final class TerminalActivity extends Activity implements ServiceConnectio
         mTerminalView.setTextSize(TerminalActivity.currentFontSize);
     }
 
-    /**
-     * Toggle extra keys layout.
-     */
     public void toggleShowExtraKeys() {
         View extraKeys = findViewById(R.id.extra_keys);
         boolean showNow = mSettings.toggleShowExtraKeys(TerminalActivity.this);
         extraKeys.setVisibility(showNow ? View.VISIBLE : View.GONE);
     }
 }
+    

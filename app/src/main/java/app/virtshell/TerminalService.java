@@ -32,6 +32,7 @@ import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.text.TextUtils;
 import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
@@ -39,18 +40,6 @@ import androidx.core.app.NotificationCompat;
 import app.virtshell.emulator.TerminalSession;
 import app.virtshell.emulator.TerminalSession.SessionChangedCallback;
 
-/**
- * A service holding a list of terminal sessions, {@link #mTerminalSession}, showing a foreground notification while
- * running so that it is not terminated. The user interacts with the session through {@link TerminalActivity}, but this
- * service may outlive the activity when the user or the system disposes of the activity. In that case the user may
- * restart {@link TerminalActivity} later to yet again access the sessions.
- * <p/>
- * In order to keep both terminal sessions and spawned processes (who may outlive the terminal sessions) alive as long
- * as wanted by the user this service is a foreground service, {@link Service#startForeground(int, Notification)}.
- * <p/>
- * Optionally may hold a wake and a wifi lock, in which case that is shown in the notification - see
- * {@link #buildNotification()}.
- */
 public class TerminalService extends Service implements SessionChangedCallback {
 
     private static final String INTENT_ACTION_SERVICE_STOP = "app.virtshell.ACTION_STOP_SERVICE";
@@ -60,33 +49,36 @@ public class TerminalService extends Service implements SessionChangedCallback {
     private static final int NOTIFICATION_ID = 1338;
     private static final String NOTIFICATION_CHANNEL_ID = "app.virtshell.NOTIFICATION_CHANNEL";
 
-    private TerminalSession mTerminalSession = null;
-
-    private final IBinder mBinder = new LocalBinder();
-
-    public int SSH_PORT = -1;
+    // 端口配置 - 作为实例变量而非final常量，允许修改
+    public int SSH_PORT = 8022;
     public int WEB_PORT = -1;
+    public int PORT_5678 = 5678;
+    public int PORT_5700 = 5700;
+    public int PORT_6379 = 6379;
+    public int PORT_9000 = 9000;
+    
+    // 端口描述信息，用于UI展示
+    private static final String[] PORT_DESCRIPTIONS = {
+        "SSH: " + 8022,
+        "Port 5678",
+        "Port 5700",
+        "Port 6379",
+        "Port 9000"
+    };
 
-    /**
-     * Note that the service may often outlive the activity, so need to clear this reference.
-     */
+    private TerminalSession mTerminalSession = null;
+    private final IBinder mBinder = new LocalBinder();
     SessionChangedCallback mSessionChangeCallback;
-
-    /**
-     * If the user has executed the {@link #INTENT_ACTION_SERVICE_STOP} intent.
-     */
     boolean mWantsToStop = false;
 
-    /**
-     * The wake lock and wifi lock are always acquired and released together.
-     */
     private PowerManager.WakeLock mWakeLock;
     private WifiManager.WifiLock mWifiLock;
 
 
     private void setupNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(NOTIFICATION_CHANNEL_ID, getString(R.string.application_name), NotificationManager.IMPORTANCE_LOW);
+            NotificationChannel channel = new NotificationChannel(NOTIFICATION_CHANNEL_ID, 
+                    getString(R.string.application_name), NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("Notifications from " + getString(R.string.application_name));
 
             NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
@@ -104,7 +96,9 @@ public class TerminalService extends Service implements SessionChangedCallback {
     public void onDestroy() {
         if (mWakeLock != null) mWakeLock.release();
         if (mWifiLock != null) mWifiLock.release();
-        mTerminalSession.finishIfRunning();
+        if (mTerminalSession != null) {
+            mTerminalSession.finishIfRunning();
+        }
         stopForeground(true);
     }
 
@@ -124,7 +118,6 @@ public class TerminalService extends Service implements SessionChangedCallback {
                 mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, Config.WAKELOCK_LOG_TAG);
                 mWakeLock.acquire();
 
-                // http://tools.android.com/tech-docs/lint-in-studio-2-3#TOC-WifiManager-Leak
                 WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
                 mWifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, Config.WAKELOCK_LOG_TAG);
                 mWifiLock.acquire();
@@ -145,8 +138,6 @@ public class TerminalService extends Service implements SessionChangedCallback {
             Log.w(Config.APP_LOG_TAG, "received an unknown action for TerminalService: " + action);
         }
 
-        // If this service really do get killed, there is no point restarting it automatically - let the user do on next
-        // start of {@link Term):
         return Service.START_NOT_STICKY;
     }
 
@@ -194,22 +185,35 @@ public class TerminalService extends Service implements SessionChangedCallback {
 
     public void terminateService() {
         mWantsToStop = true;
-        mTerminalSession.finishIfRunning();
+        if (mTerminalSession != null) {
+            mTerminalSession.finishIfRunning();
+        }
         stopForeground(true);
         stopSelf();
     }
 
+    private String getLocalIpAddress() {
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+        int ipAddress = wm.getConnectionInfo().getIpAddress();
+        return String.format("%d.%d.%d.%d",
+                (ipAddress & 0xff),
+                (ipAddress >> 8 & 0xff),
+                (ipAddress >> 16 & 0xff),
+                (ipAddress >> 24 & 0xff));
+    }
+
     private Notification buildNotification() {
         Intent notifyIntent = new Intent(this, TerminalActivity.class);
-        // PendingIntent#getActivity(): "Note that the activity will be started outside of the context of an existing
-        // activity, so you must use the Intent.FLAG_ACTIVITY_NEW_TASK launch flag in the Intent":
         notifyIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notifyIntent, 0);
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notifyIntent, 
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
 
         StringBuilder contentText = new StringBuilder();
+        String localIp = getLocalIpAddress();
 
         if (mTerminalSession != null) {
-            contentText.append("Virtual machine is running.");
+            contentText.append("VM running. IP: ").append(localIp).append("\n");
+            contentText.append("Forwarded ports: ").append(TextUtils.join(", ", PORT_DESCRIPTIONS));
         } else {
             contentText.append("Virtual machine is not initialized.");
         }
@@ -217,7 +221,7 @@ public class TerminalService extends Service implements SessionChangedCallback {
         final boolean wakeLockHeld = mWakeLock != null;
 
         if (wakeLockHeld) {
-            contentText.append(" Wake lock held.");
+            contentText.append(" | Wake lock held");
         }
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID);
@@ -227,12 +231,10 @@ public class TerminalService extends Service implements SessionChangedCallback {
         builder.setSmallIcon(R.drawable.ic_service_notification);
         builder.setPriority(NotificationCompat.PRIORITY_HIGH);
         builder.setOngoing(true);
-
-        // No need to show a timestamp:
         builder.setShowWhen(false);
-
-        // Background color for small notification icon:
         builder.setColor(0xFF000000);
+        
+        builder.setStyle(new NotificationCompat.BigTextStyle().bigText(contentText.toString()));
 
         String newWakeAction = wakeLockHeld ? INTENT_ACTION_WAKELOCK_DISABLE : INTENT_ACTION_WAKELOCK_ENABLE;
         Intent toggleWakeLockIntent = new Intent(this, TerminalService.class).setAction(newWakeAction);
@@ -240,30 +242,35 @@ public class TerminalService extends Service implements SessionChangedCallback {
             R.string.notification_action_wake_unlock :
             R.string.notification_action_wake_lock);
         int actionIcon = wakeLockHeld ? android.R.drawable.ic_lock_idle_lock : android.R.drawable.ic_lock_lock;
-        builder.addAction(actionIcon, actionTitle, PendingIntent.getService(this, 0, toggleWakeLockIntent, 0));
+        builder.addAction(actionIcon, actionTitle, PendingIntent.getService(this, 0, toggleWakeLockIntent,
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0));
 
         Intent exitIntent = new Intent(this, TerminalService.class).setAction(INTENT_ACTION_SERVICE_STOP);
-        builder.addAction(android.R.drawable.ic_delete, getResources().getString(R.string.notification_action_shutdown), PendingIntent.getService(this, 0, exitIntent, 0));
+        builder.addAction(android.R.drawable.ic_delete, getResources().getString(R.string.notification_action_shutdown), 
+                PendingIntent.getService(this, 0, exitIntent,
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0));
 
         return builder.build();
     }
 
-    /**
-     * Update the shown foreground service notification after making any changes that affect it.
-     */
     private void updateNotification() {
         if (mTerminalSession == null) {
-            // Exit if we are updating after the user disabled all locks with no sessions or tasks running.
             stopSelf();
         } else {
             ((NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE)).notify(NOTIFICATION_ID, buildNotification());
         }
     }
 
-    /**
-     * This service is only bound from inside the same process and never uses IPC.
-     */
+    public boolean isForwardedPort(int port) {
+        return port == SSH_PORT || 
+               port == PORT_5678 || 
+               port == PORT_5700 || 
+               port == PORT_6379 || 
+               port == PORT_9000;
+    }
+
     public class LocalBinder extends Binder {
         public final TerminalService service = TerminalService.this;
     }
 }
+    
