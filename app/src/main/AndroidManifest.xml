@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="app.virtshell"
+    android:installLocation="internalOnly">
+
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
+    <!-- 基础网络和服务权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    
+    <!-- 存储权限 -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
+    <!-- 声明应用使用网络套接字进行通信 -->
+    <uses-permission android:name="android.permission.USE_CREDENTIALS" />
+    <uses-permission android:name="android.permission.NETWORK_ACCESS" />
+
+    <application
+        android:extractNativeLibs="true"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:banner="@drawable/banner"
+        android:label="@string/application_name"
+        android:theme="@style/Theme.TermApp"
+        android:supportsRtl="false"
+        android:requestLegacyExternalStorage="true"
+        android:hasFragileUserData="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        tools:ignore="GoogleAppIndexingWarning">
+
+        <!-- 支持全屏显示 -->
+        <meta-data android:name="android.max_aspect" android:value="10.0" />
+
+        <!-- 多窗口支持 -->
+        <meta-data android:name="com.sec.android.support.multiwindow" android:value="true" />
+        <meta-data android:name="com.samsung.android.multidisplay.keep_process_alive" android:value="true"/>
+
+        <!-- 主活动配置 -->
+        <activity
+            android:name=".TerminalActivity"
+            android:label="@string/application_name"
+            android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+            android:launchMode="singleTask"
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize|stateAlwaysVisible" >
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            
+            <!-- 支持通过网络链接打开应用 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ssh" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".HelpActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.Light.DarkActionBar"
+            android:parentActivityName=".TerminalActivity"
+            android:resizeableActivity="true"
+            android:label="@string/application_name" />
+
+        <activity
+            android:name=".StoragePermissionActivity"
+            android:exported="false" />
+
+        <!-- 前台服务配置 -->
+        <service
+            android:name=".TerminalService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|connectedDevice">
+            <intent-filter>
+                <action android:name="app.virtshell.ACTION_STOP_SERVICE" />
+                <action android:name="app.virtshell.ACTION_ENABLE_WAKELOCK" />
+                <action android:name="app.virtshell.ACTION_DISABLE_WAKELOCK" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
+    
