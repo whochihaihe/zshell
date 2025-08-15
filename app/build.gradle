@@ -90,7 +90,7 @@ def downloadAlpineLinuxIso(String version, String expectedChecksum) {
         }
     }
 
-    def remoteUrl = "https://dl-cdn.alpinelinux.org/alpine/v" + version.take(4) + "/releases/x86_64/alpine-virt-" + version + "-x86_64.iso"
+    def remoteUrl = "https://mirrors.aliyun.com/alpine/v" + version.take(4) + "/releases/x86_64/alpine-virt-" + version + "-x86_64.iso"
     logger.quiet("Downloading " + remoteUrl + " ...")
 
     file.parentFile.mkdirs()
